@@ -29,12 +29,20 @@ server runtime or login.
 
 - The six guided states configure purposeful teaching views.
 - Free exploration remains available in every state.
-- Eight bore-outward systems remain independently selectable and hideable.
-- Layer opacity, isolation, explode, section plane, cutaway, and B₀ controls
+- Eight bore-outward systems remain independently selectable and hideable,
+  including patient-facing scanner cladding outside the cryostat vessel.
+- The quench vent and cryogenic chiller/cold-head assembly are separately
+  selectable service components rather than being mislabeled as radial layers.
+- Component opacity, isolation, exaggerated axial layer separation, a distinct
+  concentric expanded-diameter exploded view, visible zoom controls, section plane,
+  three cutaway presets,
+  Strip all / Show all reconstruction, and B₀ controls
   are independent state dimensions.
 - Guided state changes do not disable the section plane or remove the layer
   explorer.
 - Central-bore and returning-field cues can be compared or viewed separately.
+- Cutaway labels state both the removed and retained angles: closed, 90°
+  removed / 270° retained, and 270° removed / 90° retained.
 
 ## Source and model status
 

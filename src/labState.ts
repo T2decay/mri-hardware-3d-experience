@@ -1,18 +1,26 @@
-import type { FieldMode, LayerId, StepId } from "./content/lesson.ts";
+import {
+  layers,
+  serviceComponents,
+  type CutawayMode,
+  type FieldMode,
+  type SelectionId,
+  type StepId,
+} from "./content/lesson.ts";
 
-export interface LayerState {
+export interface ComponentState {
   visible: boolean;
   opacity: number;
 }
 
 export interface LabState {
   step: StepId;
-  selectedLayer: LayerId | null;
-  layers: Record<LayerId, LayerState>;
+  selectedComponent: SelectionId | null;
+  components: Record<SelectionId, ComponentState>;
   explode: number;
+  radialExplode: number;
   sectionPlane: number;
   sectionEnabled: boolean;
-  cutaway: boolean;
+  cutawayMode: CutawayMode;
   b0Visible: boolean;
   fieldMode: FieldMode;
   reducedMotion: boolean;
@@ -20,33 +28,36 @@ export interface LabState {
   challengeComplete: boolean;
 }
 
-const layerIds: LayerId[] = [
-  "bore-liner",
-  "rf-body-coil",
-  "rf-screen",
-  "gradient-assembly",
-  "cryostat-inner",
-  "main-magnet",
-  "active-shield",
-  "housing",
+export const componentIds: SelectionId[] = [
+  ...layers.map((layer) => layer.id),
+  ...serviceComponents.map((component) => component.id),
 ];
 
-export function defaultLayerState(): Record<LayerId, LayerState> {
-  return Object.fromEntries(layerIds.map((id) => [id, { visible: true, opacity: 1 }])) as Record<
-    LayerId,
-    LayerState
+export function defaultComponentState(): Record<SelectionId, ComponentState> {
+  return Object.fromEntries(componentIds.map((id) => [id, { visible: true, opacity: 1 }])) as Record<
+    SelectionId,
+    ComponentState
   >;
+}
+
+export function strippedComponentState(
+  previous: Record<SelectionId, ComponentState>,
+): Record<SelectionId, ComponentState> {
+  return Object.fromEntries(
+    componentIds.map((id) => [id, { ...previous[id], visible: false }]),
+  ) as Record<SelectionId, ComponentState>;
 }
 
 export function initialLabState(): LabState {
   return {
     step: "complete",
-    selectedLayer: null,
-    layers: defaultLayerState(),
+    selectedComponent: null,
+    components: defaultComponentState(),
     explode: 0,
+    radialExplode: 0,
     sectionPlane: 1,
     sectionEnabled: false,
-    cutaway: false,
+    cutawayMode: "closed",
     b0Visible: false,
     fieldMode: "both",
     reducedMotion: false,

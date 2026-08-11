@@ -2,56 +2,84 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import LayerExplorer from "./components/LayerExplorer.tsx";
 import ModelViewport from "./components/ModelViewport.tsx";
 import {
+  cutawayModes,
   experienceCopy,
   fieldModes,
-  layers,
+  selectableDefinitions,
   steps,
-  type LayerId,
+  type CutawayMode,
+  type SelectionId,
   type StepId,
 } from "./content/lesson.ts";
-import { defaultLayerState, initialLabState, type LabState } from "./labState.ts";
+import {
+  defaultComponentState,
+  initialLabState,
+  strippedComponentState,
+  type LabState,
+} from "./labState.ts";
 import type { MagnetScene } from "./scene/MagnetScene.ts";
+
+function preserveCladdingVisibility(
+  components: LabState["components"],
+  previous: LabState,
+): LabState["components"] {
+  return {
+    ...components,
+    "scanner-cladding": {
+      ...components["scanner-cladding"],
+      visible: previous.components["scanner-cladding"].visible,
+    },
+  };
+}
 
 function stepState(previous: LabState, step: StepId): LabState {
   const next = { ...previous, step };
   if (step === "complete") {
-    next.cutaway = false;
+    next.cutawayMode = "closed";
     next.explode = 0;
+    next.radialExplode = 0;
     next.b0Visible = false;
-    next.selectedLayer = null;
-    next.layers = defaultLayerState();
+    next.selectedComponent = null;
+    next.components = preserveCladdingVisibility(defaultComponentState(), previous);
   } else if (step === "cutaway") {
-    next.cutaway = true;
+    next.cutawayMode = "window-90";
     next.b0Visible = false;
-    next.layers = defaultLayerState();
+    next.components = preserveCladdingVisibility(defaultComponentState(), previous);
   } else if (step === "windings") {
-    next.cutaway = true;
+    next.cutawayMode = "window-90";
     next.b0Visible = false;
-    next.selectedLayer = "main-magnet";
+    next.selectedComponent = "main-magnet";
     next.windingsVisited = true;
-    next.layers = Object.fromEntries(
-      layers.map((layer) => [
-        layer.id,
-        { visible: true, opacity: layer.id === "main-magnet" ? 1 : 0.16 },
-      ]),
-    ) as LabState["layers"];
+    next.components = preserveCladdingVisibility(
+      Object.fromEntries(
+        selectableDefinitions.map((component) => [
+          component.id,
+          { visible: true, opacity: component.id === "main-magnet" ? 1 : 0.16 },
+        ]),
+      ) as LabState["components"],
+      previous,
+    );
   } else if (step === "field" || step === "geometry") {
-    next.cutaway = true;
+    next.cutawayMode = "window-90";
     next.b0Visible = true;
-    next.selectedLayer = "main-magnet";
-    next.layers = Object.fromEntries(
-      layers.map((layer) => [
-        layer.id,
-        { visible: true, opacity: layer.id === "main-magnet" ? 1 : 0.32 },
-      ]),
-    ) as LabState["layers"];
+    next.selectedComponent = "main-magnet";
+    next.components = preserveCladdingVisibility(
+      Object.fromEntries(
+        selectableDefinitions.map((component) => [
+          component.id,
+          { visible: true, opacity: component.id === "main-magnet" ? 1 : 0.32 },
+        ]),
+      ) as LabState["components"],
+      previous,
+    );
     next.challengeComplete = previous.challengeComplete || previous.windingsVisited;
   } else if (step === "reassembled") {
-    next.cutaway = false;
+    next.cutawayMode = "closed";
     next.explode = 0;
+    next.radialExplode = 0;
     next.b0Visible = false;
-    next.selectedLayer = null;
-    next.layers = defaultLayerState();
+    next.selectedComponent = null;
+    next.components = preserveCladdingVisibility(defaultComponentState(), previous);
   }
   return next;
 }
@@ -61,8 +89,24 @@ export default function App() {
   const sceneRef = useRef<MagnetScene | null>(null);
   const activeStep = useMemo(() => steps.find((step) => step.id === state.step)!, [state.step]);
 
-  const selectLayer = useCallback((id: LayerId) => {
-    setState((previous) => ({ ...previous, selectedLayer: id }));
+  const selectComponent = useCallback((id: SelectionId) => {
+    setState((previous) => ({
+      ...previous,
+      selectedComponent: id,
+      windingsVisited: previous.windingsVisited || id === "main-magnet",
+      components: {
+        ...previous.components,
+        [id]: { ...previous.components[id], visible: true },
+        ...(id === "quench-vent" || id === "cryogenic-chiller"
+          ? {
+              "scanner-cladding": {
+                ...previous.components["scanner-cladding"],
+                visible: false,
+              },
+            }
+          : {}),
+      },
+    }));
   }, []);
 
   const activateStep = (step: StepId) => setState((previous) => stepState(previous, step));
@@ -72,22 +116,34 @@ export default function App() {
     sceneRef.current?.resetCamera(state.reducedMotion);
   };
 
-  const isolate = (id: LayerId) => {
-    setState((previous) => ({
-      ...previous,
-      cutaway: true,
-      selectedLayer: id,
-      windingsVisited: previous.windingsVisited || id === "main-magnet",
-      layers: Object.fromEntries(
-        layers.map((layer) => [
-          layer.id,
-          { visible: true, opacity: layer.id === id ? 1 : 0.08 },
+  const isolate = (id: SelectionId) => {
+    setState((previous) => {
+      const components = Object.fromEntries(
+        selectableDefinitions.map((component) => [
+          component.id,
+          { visible: true, opacity: component.id === id ? 1 : 0.08 },
         ]),
-      ) as LabState["layers"],
-    }));
+      ) as LabState["components"];
+      if (id !== "scanner-cladding") {
+        components["scanner-cladding"].visible = previous.components["scanner-cladding"].visible;
+      }
+      return {
+        ...previous,
+        cutawayMode: "window-90",
+        selectedComponent: id,
+        windingsVisited: previous.windingsVisited || id === "main-magnet",
+        components,
+      };
+    });
   };
 
-  const showAll = () => setState((previous) => ({ ...previous, layers: defaultLayerState() }));
+  const showAll = () => setState((previous) => ({ ...previous, components: defaultComponentState() }));
+  const stripAll = () =>
+    setState((previous) => ({
+      ...previous,
+      selectedComponent: null,
+      components: strippedComponentState(previous.components),
+    }));
 
   return (
     <div className="app-shell">
@@ -117,7 +173,15 @@ export default function App() {
             <button type="button" className="secondary-button" onClick={reset}>Reset all</button>
           </div>
 
-          <ModelViewport state={state} onSelect={selectLayer} sceneRef={sceneRef} />
+          <ModelViewport
+            state={state}
+            onSelect={selectComponent}
+            onExplode={(explode) => setState((previous) => ({ ...previous, explode }))}
+            onRadialExplode={(radialExplode) =>
+              setState((previous) => ({ ...previous, radialExplode }))
+            }
+            sceneRef={sceneRef}
+          />
           <div className="caption-row">
             <span>{experienceCopy.modelCaption}</span>
             {state.b0Visible && <span className="field-caption">{experienceCopy.fieldCaption}</span>}
@@ -133,10 +197,21 @@ export default function App() {
                 <button
                   type="button"
                   className="secondary-button"
-                  aria-pressed={state.cutaway}
-                  onClick={() => setState((previous) => ({ ...previous, cutaway: !previous.cutaway }))}
+                  aria-pressed={!state.components["scanner-cladding"].visible}
+                  onClick={() =>
+                    setState((previous) => ({
+                      ...previous,
+                      components: {
+                        ...previous.components,
+                        "scanner-cladding": {
+                          ...previous.components["scanner-cladding"],
+                          visible: !previous.components["scanner-cladding"].visible,
+                        },
+                      },
+                    }))
+                  }
                 >
-                  {state.cutaway ? "Cutaway on" : "Cutaway off"}
+                  {state.components["scanner-cladding"].visible ? "Remove cladding" : "Restore cladding"}
                 </button>
                 <button
                   type="button"
@@ -164,25 +239,27 @@ export default function App() {
               </div>
             </div>
 
-            <div className="range-grid">
-              <div className="range-control">
-                <label className="range-label" htmlFor="explode">
-                  <span>Explode layers</span>
-                  <output>{Math.round(state.explode * 100)}%</output>
-                </label>
-                <input
-                  id="explode"
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round(state.explode * 100)}
-                  onChange={(event) => {
-                    const explode = Number(event.currentTarget.value) / 100;
-                    setState((previous) => ({ ...previous, explode }));
-                  }}
-                />
+            <div className="cutaway-control">
+              <div>
+                <span className="kicker">CUTAWAY PRESET</span>
+                <p>{cutawayModes[state.cutawayMode].detail}</p>
               </div>
+              <div className="button-cluster" role="group" aria-label="Cutaway preset">
+                {(Object.keys(cutawayModes) as CutawayMode[]).map((mode) => (
+                  <button
+                    type="button"
+                    className="field-button"
+                    key={mode}
+                    aria-pressed={state.cutawayMode === mode}
+                    onClick={() => setState((previous) => ({ ...previous, cutawayMode: mode }))}
+                  >
+                    {cutawayModes[mode].label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
+            <div className="range-grid section-range-grid">
               <div className="range-control section-control">
                 <label className="range-label" htmlFor="section-plane">
                   <span>Section plane · slide along bore</span>
@@ -257,29 +334,33 @@ export default function App() {
 
         <LayerExplorer
           state={state}
-          onSelect={selectLayer}
+          onSelect={selectComponent}
           onToggle={(id) =>
             setState((previous) => ({
               ...previous,
-              layers: {
-                ...previous.layers,
-                [id]: { ...previous.layers[id], visible: !previous.layers[id].visible },
+              components: {
+                ...previous.components,
+                [id]: { ...previous.components[id], visible: !previous.components[id].visible },
               },
             }))
           }
           onOpacity={(id, opacity) =>
             setState((previous) => ({
               ...previous,
-              layers: { ...previous.layers, [id]: { ...previous.layers[id], opacity } },
+              components: {
+                ...previous.components,
+                [id]: { ...previous.components[id], opacity, visible: true },
+              },
             }))
           }
           onIsolate={isolate}
           onShowAll={showAll}
+          onStripAll={stripAll}
         />
       </main>
 
       <footer>
-        B₀ / static field · magnetic shielding · RF shielding / Faraday cage remain separate concepts and controls.
+        B₀ / static field · magnetic shielding · room RF shielding / Faraday cage are distinct concepts; the room enclosure is not a magnet layer.
       </footer>
     </div>
   );

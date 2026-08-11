@@ -1,49 +1,75 @@
 import { useEffect, useRef, useState } from "react";
-import { layers, type LayerId, type StepId } from "../content/lesson.ts";
+import { selectableDefinitions, type SelectionId, type StepId } from "../content/lesson.ts";
 import type { LabState } from "../labState.ts";
-import type { LabelPosition, MagnetScene } from "../scene/MagnetScene.ts";
+import type { LabelPosition, MagnetScene, MagnetSceneState } from "../scene/MagnetScene.ts";
 
 interface Props {
   state: LabState;
-  onSelect: (id: LayerId) => void;
+  onSelect: (id: SelectionId) => void;
+  onExplode: (value: number) => void;
+  onRadialExplode: (value: number) => void;
   sceneRef: React.RefObject<MagnetScene | null>;
 }
 
-const visibleLabels: Record<StepId, Array<{ id: string; text: string; layerId?: LayerId }>> = {
+const visibleLabels: Record<StepId, Array<{ id: string; text: string; selectionId?: SelectionId }>> = {
   complete: [
-    { id: "bore-liner", text: "Bore", layerId: "bore-liner" },
-    { id: "housing", text: "Complete magnet", layerId: "housing" },
+    { id: "bore-liner", text: "Bore", selectionId: "bore-liner" },
+    { id: "scanner-cladding", text: "Scanner cladding", selectionId: "scanner-cladding" },
   ],
   cutaway: [
-    { id: "bore-liner", text: "Bore", layerId: "bore-liner" },
-    { id: "cryostat-inner", text: "Cryostat", layerId: "cryostat-inner" },
-    { id: "main-magnet", text: "Main windings", layerId: "main-magnet" },
+    { id: "bore-liner", text: "Bore", selectionId: "bore-liner" },
+    { id: "cryostat-inner", text: "Cryostat", selectionId: "cryostat-inner" },
+    { id: "main-magnet", text: "Main windings", selectionId: "main-magnet" },
+    { id: "quench-vent", text: "Quench pipe", selectionId: "quench-vent" },
+    { id: "cryogenic-chiller", text: "Cold head", selectionId: "cryogenic-chiller" },
   ],
   windings: [
-    { id: "main-magnet", text: "Superconducting wire windings", layerId: "main-magnet" },
-    { id: "cryostat-inner", text: "Cryostat · cold environment", layerId: "cryostat-inner" },
+    { id: "main-magnet", text: "Superconducting wire windings", selectionId: "main-magnet" },
+    { id: "cryostat-inner", text: "Cryostat · cold environment", selectionId: "cryostat-inner" },
   ],
   field: [
-    { id: "main-magnet", text: "Current in windings", layerId: "main-magnet" },
+    { id: "main-magnet", text: "Current in windings", selectionId: "main-magnet" },
     { id: "b0", text: "B₀ · static magnetic field" },
     { id: "isocenter", text: "Isocenter" },
   ],
   geometry: [
-    { id: "bore-liner", text: "Central bore", layerId: "bore-liner" },
+    { id: "bore-liner", text: "Central bore", selectionId: "bore-liner" },
     { id: "b0", text: "B₀ · qualitative geometry" },
     { id: "isocenter", text: "Isocenter" },
   ],
   reassembled: [
-    { id: "bore-liner", text: "Bore", layerId: "bore-liner" },
-    { id: "housing", text: "Complete magnet", layerId: "housing" },
+    { id: "bore-liner", text: "Bore", selectionId: "bore-liner" },
+    { id: "scanner-cladding", text: "Scanner cladding", selectionId: "scanner-cladding" },
   ],
 };
 
-export default function ModelViewport({ state, onSelect, sceneRef }: Props) {
+function sceneState(state: LabState): MagnetSceneState {
+  return {
+    step: state.step,
+    components: state.components,
+    selectedComponent: state.selectedComponent,
+    explode: state.explode,
+    radialExplode: state.radialExplode,
+    cutawayMode: state.cutawayMode,
+    sectionEnabled: state.sectionEnabled,
+    sectionPlane: state.sectionPlane,
+    b0Visible: state.b0Visible,
+    fieldMode: state.fieldMode,
+    reducedMotion: state.reducedMotion,
+  };
+}
+
+export default function ModelViewport({
+  state,
+  onSelect,
+  onExplode,
+  onRadialExplode,
+  sceneRef,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  const [hover, setHover] = useState<{ id: LayerId; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ id: SelectionId; x: number; y: number } | null>(null);
   const [positions, setPositions] = useState<Record<string, LabelPosition>>({});
 
   useEffect(() => {
@@ -67,6 +93,7 @@ export default function ModelViewport({ state, onSelect, sceneRef }: Props) {
           setLoading(false);
           return;
         }
+        scene.update(sceneState(state));
         sceneRef.current = scene;
         observer = new ResizeObserver(() => scene?.resize());
         observer.observe(canvas);
@@ -86,21 +113,12 @@ export default function ModelViewport({ state, onSelect, sceneRef }: Props) {
   }, [onSelect, sceneRef]);
 
   useEffect(() => {
-    sceneRef.current?.update({
-      step: state.step,
-      layers: state.layers,
-      selectedLayer: state.selectedLayer,
-      explode: state.explode,
-      cutaway: state.cutaway,
-      sectionEnabled: state.sectionEnabled,
-      sectionPlane: state.sectionPlane,
-      b0Visible: state.b0Visible,
-      fieldMode: state.fieldMode,
-      reducedMotion: state.reducedMotion,
-    });
+    sceneRef.current?.update(sceneState(state));
   }, [sceneRef, state]);
 
-  const hoverLayer = hover ? layers.find((layer) => layer.id === hover.id) : null;
+  const hoverComponent = hover
+    ? selectableDefinitions.find((component) => component.id === hover.id)
+    : null;
 
   return (
     <div className="model-frame">
@@ -122,14 +140,15 @@ export default function ModelViewport({ state, onSelect, sceneRef }: Props) {
               {visibleLabels[state.step].map((label) => {
                 const position = positions[label.id];
                 if (!position?.visible) return null;
+                if (label.selectionId && !state.components[label.selectionId].visible) return null;
                 const style = { left: position.x, top: position.y };
-                return label.layerId ? (
+                return label.selectionId ? (
                   <button
                     type="button"
                     className="model-label"
                     key={label.id}
                     style={style}
-                    onClick={() => onSelect(label.layerId!)}
+                    onClick={() => onSelect(label.selectionId!)}
                   >
                     {label.text}
                   </button>
@@ -141,13 +160,65 @@ export default function ModelViewport({ state, onSelect, sceneRef }: Props) {
               })}
             </div>
           )}
-          {hover && hoverLayer && (
+          {hover && hoverComponent && (
             <div className="hover-tip" style={{ left: hover.x, top: hover.y }}>
-              {String(hoverLayer.order).padStart(2, "0")} · {hoverLayer.shortName}
+              {hoverComponent.kind === "layer"
+                ? `${String(hoverComponent.order).padStart(2, "0")} · ${hoverComponent.shortName}`
+                : `SERVICE · ${hoverComponent.shortName}`}
             </div>
           )}
+          <div className="viewport-controls">
+            <div className="viewport-spatial-controls">
+              <div className="viewport-spatial-row">
+                <label htmlFor="viewport-explode">
+                  <span>Layer separation</span>
+                  <output>{Math.round(state.explode * 100)}%</output>
+                </label>
+                <input
+                  id="viewport-explode"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(state.explode * 100)}
+                  onChange={(event) => onExplode(Number(event.currentTarget.value) / 100)}
+                />
+              </div>
+              <div className="viewport-spatial-row">
+                <label htmlFor="viewport-radial-explode">
+                  <span>Exploded view</span>
+                  <output>{Math.round(state.radialExplode * 100)}%</output>
+                </label>
+                <input
+                  id="viewport-radial-explode"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(state.radialExplode * 100)}
+                  onChange={(event) => onRadialExplode(Number(event.currentTarget.value) / 100)}
+                />
+              </div>
+            </div>
+            <div className="viewport-zoom" role="group" aria-label="Zoom controls">
+              <button
+                type="button"
+                aria-label="Zoom out"
+                title="Zoom out"
+                onClick={() => sceneRef.current?.zoom("out")}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                aria-label="Zoom in"
+                title="Zoom in"
+                onClick={() => sceneRef.current?.zoom("in")}
+              >
+                +
+              </button>
+            </div>
+          </div>
           <div className="model-help" aria-hidden="true">
-            DRAG ROTATE · SCROLL ZOOM · ARROW KEYS ROTATE · +/− ZOOM
+            DRAG ROTATE · SCROLL ZOOM · ARROW KEYS ROTATE
           </div>
           <div className="axis-chip" aria-hidden="true">Z · BORE AXIS</div>
         </>

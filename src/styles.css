@@ -292,6 +292,83 @@ h1 {
   pointer-events: none;
 }
 
+.viewport-controls {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 7;
+  display: grid;
+  grid-template-columns: minmax(180px, 270px) auto;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.viewport-spatial-controls,
+.viewport-zoom {
+  border: 1px solid rgba(92, 108, 117, 0.65);
+  background: rgba(250, 249, 246, 0.94);
+  box-shadow: 0 5px 18px rgba(38, 47, 51, 0.12);
+  pointer-events: auto;
+}
+
+.viewport-spatial-controls {
+  padding: 9px 11px 8px;
+}
+
+.viewport-spatial-row + .viewport-spatial-row {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(92, 108, 117, 0.28);
+}
+
+.viewport-spatial-controls label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+  color: #26343b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.viewport-spatial-controls output {
+  color: var(--teal-dark);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.viewport-spatial-controls input {
+  display: block;
+}
+
+.viewport-zoom {
+  display: grid;
+  grid-template-columns: repeat(2, 38px);
+}
+
+.viewport-zoom button {
+  width: 38px;
+  min-height: 38px;
+  border: 0;
+  background: transparent;
+  color: #26343b;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.viewport-zoom button + button {
+  border-left: 1px solid rgba(92, 108, 117, 0.45);
+}
+
+.viewport-zoom button:hover {
+  background: rgba(19, 141, 139, 0.1);
+  color: var(--teal-dark);
+}
+
 .model-help,
 .axis-chip {
   position: absolute;
@@ -338,11 +415,35 @@ h1 {
   gap: 7px;
 }
 
+.cutaway-control {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 22px;
+  margin-top: 18px;
+  padding: 15px 0;
+  border-top: 1px solid #d0d7da;
+  border-bottom: 1px solid #d0d7da;
+}
+
+.cutaway-control p {
+  max-width: 680px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .range-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 28px;
   margin-top: 18px;
+}
+
+.section-range-grid {
+  grid-template-columns: 1fr;
 }
 
 .range-control {
@@ -490,6 +591,12 @@ input[type="range"]:disabled {
   font-size: 15px;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .layer-list {
   list-style: none;
   margin: 0;
@@ -499,8 +606,9 @@ input[type="range"]:disabled {
 
 .layer-list li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) 72px;
   align-items: center;
+  gap: 7px;
   border-left: 2px solid transparent;
 }
 
@@ -534,6 +642,13 @@ input[type="range"]:disabled {
   font-size: 9px;
 }
 
+.service-mark {
+  color: var(--teal-dark);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+}
+
 .layer-swatch {
   width: 9px;
   height: 9px;
@@ -541,15 +656,85 @@ input[type="range"]:disabled {
 }
 
 .visibility {
-  padding: 8px 0;
-  color: #6c7980;
+  min-height: 29px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 4px 5px 4px 7px;
+  border: 1px solid #7f929c;
+  background: #edf2f3;
+  color: #4d5d65;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 8px;
+  font-size: 8.5px;
+  font-weight: 800;
   letter-spacing: 0.08em;
 }
 
+.visibility:hover {
+  border-color: #40545d;
+  background: #fff;
+}
+
+.visibility[aria-pressed="true"] {
+  border-color: #287f7d;
+  background: #e1eeee;
+  color: #175f60;
+}
+
 .visibility[aria-pressed="false"] {
-  color: #a04b38;
+  border-color: #ad8178;
+  background: #f3e9e7;
+  color: #8d4035;
+}
+
+.visibility-state {
+  min-width: 22px;
+  text-align: center;
+}
+
+.toggle-track {
+  position: relative;
+  width: 27px;
+  height: 15px;
+  flex: 0 0 auto;
+  border: 1px solid #87959a;
+  background: #c5ced1;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(25, 39, 45, 0.24);
+  transition: transform 150ms ease;
+}
+
+.visibility[aria-pressed="true"] .toggle-track {
+  border-color: #287f7d;
+  background: #319997;
+}
+
+.visibility[aria-pressed="true"] .toggle-thumb {
+  transform: translateX(12px);
+}
+
+.service-heading {
+  padding: 18px 0 2px;
+}
+
+.service-heading p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+}
+
+.service-list {
+  padding-top: 6px;
 }
 
 .layer-detail {
@@ -573,6 +758,24 @@ input[type="range"]:disabled {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 14px;
   line-height: 1.55;
+}
+
+.service-notes {
+  margin: 14px 0 18px;
+  padding: 12px 13px;
+  border-left: 2px solid var(--teal);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.service-notes p {
+  margin: 0;
+  color: #48565e;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.service-notes p + p {
+  margin-top: 8px;
 }
 
 .detail-actions {
@@ -619,6 +822,11 @@ footer {
   .field-mode-row {
     grid-template-columns: 1fr;
     gap: 9px;
+  }
+
+  .cutaway-control {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 }
 
@@ -691,6 +899,27 @@ footer {
     max-width: calc(100% - 105px);
   }
 
+  .viewport-controls {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .viewport-spatial-controls {
+    padding: 8px 9px 7px;
+  }
+
+  .viewport-zoom {
+    grid-template-columns: repeat(2, 36px);
+  }
+
+  .viewport-zoom button {
+    width: 36px;
+    min-height: 36px;
+  }
+
   .model-label {
     max-width: 145px;
     white-space: normal;
@@ -699,6 +928,7 @@ footer {
 
   .caption-row,
   .control-header,
+  .cutaway-control,
   .step-instruction {
     display: grid;
     grid-template-columns: 1fr;
@@ -718,6 +948,10 @@ footer {
 
   .button-cluster .secondary-button {
     flex: 1 1 auto;
+  }
+
+  .cutaway-control .field-button {
+    flex: 1 1 30%;
   }
 
   .range-grid {

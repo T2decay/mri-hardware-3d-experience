@@ -1,15 +1,22 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import type { FieldMode, LayerId, StepId } from "../content/lesson.ts";
-import type { LayerState } from "../labState.ts";
+import type {
+  CutawayMode,
+  FieldMode,
+  LayerId,
+  SelectionId,
+  StepId,
+} from "../content/lesson.ts";
+import type { ComponentState } from "../labState.ts";
 
 export interface MagnetSceneState {
   step: StepId;
-  layers: Record<LayerId, LayerState>;
-  selectedLayer: LayerId | null;
+  components: Record<SelectionId, ComponentState>;
+  selectedComponent: SelectionId | null;
   explode: number;
-  cutaway: boolean;
+  radialExplode: number;
+  cutawayMode: CutawayMode;
   sectionEnabled: boolean;
   sectionPlane: number;
   b0Visible: boolean;
@@ -25,8 +32,8 @@ export interface LabelPosition {
 }
 
 export interface MagnetSceneCallbacks {
-  onSelect: (id: LayerId) => void;
-  onHover: (id: LayerId | null, x: number, y: number) => void;
+  onSelect: (id: SelectionId) => void;
+  onHover: (id: SelectionId | null, x: number, y: number) => void;
   onLabels: (positions: LabelPosition[]) => void;
 }
 
@@ -34,35 +41,44 @@ interface SceneMaterial extends THREE.MeshPhysicalMaterial {
   userData: {
     baseOpacity?: number;
     baseEmissive?: number;
-    layerId?: LayerId;
+    selectionId?: SelectionId;
   };
 }
 
-interface LayerVisual {
-  id: LayerId;
+interface ComponentVisual {
+  id: SelectionId;
+  kind: "layer" | "service";
   order: number;
   group: THREE.Group;
   materials: SceneMaterial[];
+}
+
+interface CutawayVariants {
+  closed: THREE.Group;
+  window90: THREE.Group;
+  reveal270: THREE.Group;
 }
 
 const MODEL_LENGTH = 10.8;
 const FRONT_Z = MODEL_LENGTH / 2;
 const BACK_Z = -MODEL_LENGTH / 2;
 const CUT_START = 0.5;
-const SECTOR_START = THREE.MathUtils.degToRad(112);
-const SECTOR_END = THREE.MathUtils.degToRad(380);
+const WINDOW_START = THREE.MathUtils.degToRad(112);
+const WINDOW_END = WINDOW_START + THREE.MathUtils.degToRad(270);
+const REVEAL_START = THREE.MathUtils.degToRad(135);
+const REVEAL_END = REVEAL_START + THREE.MathUtils.degToRad(90);
 const COPPER = 0xc86324;
 const FIELD = 0x25aebe;
 
 const radial: Record<LayerId, [number, number]> = {
   "bore-liner": [2.0, 2.25],
   "rf-body-coil": [2.34, 2.58],
-  "rf-screen": [2.68, 2.81],
-  "gradient-assembly": [2.92, 3.47],
-  "cryostat-inner": [3.58, 3.87],
-  "main-magnet": [3.96, 4.44],
-  "active-shield": [4.68, 4.95],
-  housing: [5.23, 5.58],
+  "gradient-assembly": [2.68, 3.38],
+  "cryostat-inner": [3.49, 3.82],
+  "main-magnet": [3.92, 4.42],
+  "active-shield": [4.66, 4.94],
+  housing: [5.21, 5.57],
+  "scanner-cladding": [5.71, 6.27],
 };
 
 const cameraPresets: Record<StepId, { position: THREE.Vector3; target: THREE.Vector3 }> = {
@@ -102,13 +118,13 @@ export class MagnetScene {
   private camera!: THREE.PerspectiveCamera;
   private controls!: OrbitControls;
   private root = new THREE.Group();
-  private layers = new Map<LayerId, LayerVisual>();
+  private components = new Map<SelectionId, ComponentVisual>();
+  private cutawayVariants = new Map<LayerId, CutawayVariants>();
   private pickables: THREE.Object3D[] = [];
-  private completeHousing = new THREE.Group();
-  private cutawayHousing = new THREE.Group();
   private centralField = new THREE.Group();
   private returnField = new THREE.Group();
   private currentCues = new THREE.Group();
+  private quenchInternal: THREE.Group | null = null;
   private clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), FRONT_Z + 1);
   private clipVisual!: THREE.Mesh;
   private pointer = new THREE.Vector2();
@@ -155,7 +171,7 @@ export class MagnetScene {
     this.controls.enableDamping = false;
     this.controls.enablePan = false;
     this.controls.minDistance = 13;
-    this.controls.maxDistance = 30;
+    this.controls.maxDistance = 40;
     this.controls.minPolarAngle = 0.52;
     this.controls.maxPolarAngle = 1.78;
     this.controls.minAzimuthAngle = -1.05;
@@ -206,10 +222,10 @@ export class MagnetScene {
     return shape;
   }
 
-  private sectorShape(rIn: number, rOut: number): THREE.Shape {
+  private sectorShape(rIn: number, rOut: number, start: number, end: number): THREE.Shape {
     const shape = new THREE.Shape();
-    shape.absarc(0, 0, rOut, SECTOR_START, SECTOR_END, false);
-    shape.absarc(0, 0, rIn, SECTOR_END, SECTOR_START, true);
+    shape.absarc(0, 0, rOut, start, end, false);
+    shape.absarc(0, 0, rIn, end, start, true);
     shape.closePath();
     return shape;
   }
@@ -237,19 +253,20 @@ export class MagnetScene {
   }
 
   private register(
-    id: LayerId,
+    id: SelectionId,
     order: number,
     object: THREE.Object3D,
     materials: SceneMaterial[],
+    kind: "layer" | "service" = "layer",
   ): void {
     object.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
-      child.userData.layerId = id;
+      child.userData.selectionId = id;
       this.pickables.push(child);
       const material = child.material as SceneMaterial;
-      material.userData.layerId = id;
+      material.userData.selectionId = id;
     });
-    this.layers.set(id, { id, order, group: object as THREE.Group, materials });
+    this.components.set(id, { id, kind, order, group: object as THREE.Group, materials });
   }
 
   private addLayerShell(
@@ -262,10 +279,34 @@ export class MagnetScene {
     const group = new THREE.Group();
     const material = this.material(color, options);
     const rear = this.extrude(this.fullRingShape(rIn, rOut), CUT_START - BACK_Z, BACK_Z, material, true);
-    const front = this.extrude(this.sectorShape(rIn, rOut), FRONT_Z - CUT_START, CUT_START, material, true);
-    group.add(rear, front);
+    const closed = new THREE.Group();
+    const window90 = new THREE.Group();
+    const reveal270 = new THREE.Group();
+    closed.add(this.extrude(this.fullRingShape(rIn, rOut), FRONT_Z - CUT_START, CUT_START, material, true));
+    window90.add(
+      this.extrude(
+        this.sectorShape(rIn, rOut, WINDOW_START, WINDOW_END),
+        FRONT_Z - CUT_START,
+        CUT_START,
+        material,
+        true,
+      ),
+    );
+    reveal270.add(
+      this.extrude(
+        this.sectorShape(rIn, rOut, REVEAL_START, REVEAL_END),
+        FRONT_Z - CUT_START,
+        CUT_START,
+        material,
+        true,
+      ),
+    );
+    window90.visible = false;
+    reveal270.visible = false;
+    group.add(rear, closed, window90, reveal270);
     this.root.add(group);
     this.register(id, order, group, [material]);
+    this.cutawayVariants.set(id, { closed, window90, reveal270 });
     return group;
   }
 
@@ -306,12 +347,7 @@ export class MagnetScene {
       roughness: 0.5,
     });
 
-    this.addLayerShell("rf-screen", 3, 0x6c557b, {
-      metalness: 0.7,
-      roughness: 0.34,
-    });
-
-    const gradient = this.addLayerShell("gradient-assembly", 4, 0x285c96, {
+    const gradient = this.addLayerShell("gradient-assembly", 3, 0x285c96, {
       metalness: 0.18,
       roughness: 0.3,
       clearcoat: 0.6,
@@ -319,7 +355,7 @@ export class MagnetScene {
     });
     this.addGradientRibs(gradient);
 
-    const cryostat = this.addLayerShell("cryostat-inner", 5, 0x4f9695, {
+    const cryostat = this.addLayerShell("cryostat-inner", 4, 0x4f9695, {
       metalness: 0.36,
       roughness: 0.31,
       clearcoat: 0.34,
@@ -329,12 +365,15 @@ export class MagnetScene {
     this.buildMainWindings();
     this.buildShieldWindings();
     this.buildOuterHousing();
+    this.buildScannerCladding();
     this.buildServiceHardware();
     this.buildSupports();
     this.buildLabelAnchors();
   }
 
-  private addGradientRibs(group: THREE.Group): void {
+  private addGradientRibs(_group: THREE.Group): void {
+    const variants = this.cutawayVariants.get("gradient-assembly");
+    if (!variants) return;
     const materials: SceneMaterial[] = [];
     for (let i = 0; i < 7; i += 1) {
       const z = CUT_START + 0.42 + i * 0.62;
@@ -343,16 +382,40 @@ export class MagnetScene {
         roughness: 0.26,
         clearcoat: 0.7,
       });
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.045, 8, 96, SECTOR_END - SECTOR_START), material);
-      ring.rotation.z = SECTOR_START;
-      ring.position.z = z;
-      ring.castShadow = true;
-      ring.userData.layerId = "gradient-assembly";
-      this.pickables.push(ring);
+      const variantMeshes = [
+        {
+          parent: variants.closed,
+          mesh: new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.045, 8, 96), material),
+          rotation: 0,
+        },
+        {
+          parent: variants.window90,
+          mesh: new THREE.Mesh(
+            new THREE.TorusGeometry(3.5, 0.045, 8, 96, WINDOW_END - WINDOW_START),
+            material,
+          ),
+          rotation: WINDOW_START,
+        },
+        {
+          parent: variants.reveal270,
+          mesh: new THREE.Mesh(
+            new THREE.TorusGeometry(3.5, 0.045, 8, 96, REVEAL_END - REVEAL_START),
+            material,
+          ),
+          rotation: REVEAL_START,
+        },
+      ];
+      variantMeshes.forEach(({ parent, mesh, rotation }) => {
+        mesh.rotation.z = rotation;
+        mesh.position.z = z;
+        mesh.castShadow = true;
+        mesh.userData.selectionId = "gradient-assembly";
+        this.pickables.push(mesh);
+        parent.add(mesh);
+      });
       materials.push(material);
-      group.add(ring);
     }
-    this.layers.get("gradient-assembly")?.materials.push(...materials);
+    this.components.get("gradient-assembly")?.materials.push(...materials);
   }
 
   private addBoreNozzle(group: THREE.Group): void {
@@ -362,31 +425,45 @@ export class MagnetScene {
       clearcoat: 0.38,
     });
     const nozzle = this.extrude(this.fullRingShape(1.98, 2.25), 1.55, FRONT_Z - 0.12, material, true);
-    nozzle.userData.layerId = "bore-liner";
+    nozzle.userData.selectionId = "bore-liner";
     group.add(nozzle);
     this.pickables.push(nozzle);
-    this.layers.get("bore-liner")?.materials.push(material);
+    this.components.get("bore-liner")?.materials.push(material);
   }
 
-  private addCryostatBands(group: THREE.Group): void {
+  private addCryostatBands(_group: THREE.Group): void {
+    const variants = this.cutawayVariants.get("cryostat-inner");
+    if (!variants) return;
     const materials: SceneMaterial[] = [];
-    for (let i = 0; i < 12; i += 1) {
-      const angle = SECTOR_START + 0.18 + i * ((SECTOR_END - SECTOR_START - 0.36) / 11);
-      const material = this.material(0xbed0c9, {
-        metalness: 0.74,
-        roughness: 0.32,
-      });
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.32, FRONT_Z - CUT_START), material);
-      const radius = 3.91;
-      bar.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, (FRONT_Z + CUT_START) / 2);
-      bar.rotation.z = angle;
-      bar.userData.layerId = "cryostat-inner";
-      bar.castShadow = true;
-      this.pickables.push(bar);
-      materials.push(material);
-      group.add(bar);
-    }
-    this.layers.get("cryostat-inner")?.materials.push(...materials);
+    const addBars = (parent: THREE.Group, start: number, end: number, count: number) => {
+      for (let i = 0; i < count; i += 1) {
+        const angle = start + 0.18 + i * ((end - start - 0.36) / Math.max(1, count - 1));
+        const material = this.material(0xbed0c9, {
+          metalness: 0.74,
+          roughness: 0.32,
+        });
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(0.12, 0.32, FRONT_Z - CUT_START),
+          material,
+        );
+        const radius = 3.91;
+        bar.position.set(
+          Math.cos(angle) * radius,
+          Math.sin(angle) * radius,
+          (FRONT_Z + CUT_START) / 2,
+        );
+        bar.rotation.z = angle;
+        bar.userData.selectionId = "cryostat-inner";
+        bar.castShadow = true;
+        this.pickables.push(bar);
+        materials.push(material);
+        parent.add(bar);
+      }
+    };
+    addBars(variants.closed, 0, Math.PI * 2, 16);
+    addBars(variants.window90, WINDOW_START, WINDOW_END, 12);
+    addBars(variants.reveal270, REVEAL_START, REVEAL_END, 5);
+    this.components.get("cryostat-inner")?.materials.push(...materials);
   }
 
   private buildMainWindings(): void {
@@ -411,8 +488,6 @@ export class MagnetScene {
         wire.position.z = z;
         wire.castShadow = true;
         wire.receiveShadow = true;
-        wire.userData.layerId = id;
-        this.pickables.push(wire);
         materials.push(material);
         group.add(wire);
       }
@@ -426,15 +501,13 @@ export class MagnetScene {
       );
       former.scale.set(1.01, 1.01, 1);
       former.position.z = center;
-      former.userData.layerId = id;
       former.renderOrder = -1;
-      this.pickables.push(former);
       materials.push(formerMaterial);
       group.add(former);
     });
 
     this.root.add(group);
-    this.register(id, 6, group, materials);
+    this.register(id, 5, group, materials);
   }
 
   private buildShieldWindings(): void {
@@ -449,15 +522,13 @@ export class MagnetScene {
         });
         const wire = new THREE.Mesh(new THREE.TorusGeometry(4.82, 0.035, 8, 112), material);
         wire.position.z = center + (turn - 2) * 0.095;
-        wire.userData.layerId = id;
         wire.castShadow = true;
-        this.pickables.push(wire);
         materials.push(material);
         group.add(wire);
       }
     });
     this.root.add(group);
-    this.register(id, 7, group, materials);
+    this.register(id, 6, group, materials);
   }
 
   private buildOuterHousing(): void {
@@ -478,6 +549,10 @@ export class MagnetScene {
       roughness: 0.48,
     });
 
+    const closed = new THREE.Group();
+    const window90 = new THREE.Group();
+    const reveal270 = new THREE.Group();
+
     const complete = this.extrude(
       this.fullRingShape(radial.housing[0], radial.housing[1]),
       MODEL_LENGTH,
@@ -492,83 +567,211 @@ export class MagnetScene {
       metal,
       true,
     );
-    this.completeHousing.add(complete, frontFascia);
+    closed.add(complete, frontFascia);
 
-    const rear = this.extrude(
-      this.fullRingShape(radial.housing[0], radial.housing[1]),
-      CUT_START - BACK_Z,
-      BACK_Z,
-      metal,
-      true,
-    );
-    const front = this.extrude(
-      this.sectorShape(radial.housing[0], radial.housing[1]),
-      FRONT_Z - CUT_START,
-      CUT_START,
-      metal,
-      true,
-    );
-    const insulation = this.extrude(this.sectorShape(5.03, 5.19), FRONT_Z - CUT_START - 0.18, CUT_START + 0.1, mli);
-    const vacuumBand = this.extrude(this.sectorShape(4.99, 5.04), FRONT_Z - CUT_START - 0.1, CUT_START + 0.05, dark);
-    this.cutawayHousing.add(rear, front, insulation, vacuumBand);
-    group.add(this.completeHousing, this.cutawayHousing);
+    const addCutaway = (parent: THREE.Group, start: number, end: number) => {
+      const rear = this.extrude(
+        this.fullRingShape(radial.housing[0], radial.housing[1]),
+        CUT_START - BACK_Z,
+        BACK_Z,
+        metal,
+        true,
+      );
+      const front = this.extrude(
+        this.sectorShape(radial.housing[0], radial.housing[1], start, end),
+        FRONT_Z - CUT_START,
+        CUT_START,
+        metal,
+        true,
+      );
+      const insulation = this.extrude(
+        this.sectorShape(5.03, 5.19, start, end),
+        FRONT_Z - CUT_START - 0.18,
+        CUT_START + 0.1,
+        mli,
+      );
+      const vacuumBand = this.extrude(
+        this.sectorShape(4.99, 5.04, start, end),
+        FRONT_Z - CUT_START - 0.1,
+        CUT_START + 0.05,
+        dark,
+      );
+      parent.add(rear, front, insulation, vacuumBand);
+    };
+    addCutaway(window90, WINDOW_START, WINDOW_END);
+    addCutaway(reveal270, REVEAL_START, REVEAL_END);
+    window90.visible = false;
+    reveal270.visible = false;
+
+    group.add(closed, window90, reveal270);
     this.root.add(group);
-    this.register(id, 8, group, [metal, dark, mli]);
+    this.register(id, 7, group, [metal, dark, mli]);
+    this.cutawayVariants.set(id, { closed, window90, reveal270 });
+  }
+
+  private buildScannerCladding(): void {
+    const id: LayerId = "scanner-cladding";
+    const group = new THREE.Group();
+    const closed = new THREE.Group();
+    const window90 = new THREE.Group();
+    const reveal270 = new THREE.Group();
+    const white = this.material(0xd9d8d2, {
+      metalness: 0.04,
+      roughness: 0.28,
+      clearcoat: 0.72,
+      clearcoatRoughness: 0.2,
+    });
+    const trim = this.material(0xaeb8bc, {
+      metalness: 0.48,
+      roughness: 0.3,
+      clearcoat: 0.3,
+    });
+    const dark = this.material(0x30383c, {
+      metalness: 0.2,
+      roughness: 0.42,
+    });
+    const accent = this.material(0x7895a4, {
+      metalness: 0.32,
+      roughness: 0.34,
+      clearcoat: 0.35,
+    });
+    const screen = this.material(0x11191d, {
+      metalness: 0.18,
+      roughness: 0.24,
+      emissive: new THREE.Color(0x081418),
+      emissiveIntensity: 0.2,
+    });
+    const interfaceFace = this.material(0x9fb1b9, {
+      metalness: 0.18,
+      roughness: 0.34,
+      clearcoat: 0.32,
+    });
+
+    closed.add(
+      this.extrude(this.fullRingShape(5.62, 6.28), MODEL_LENGTH + 0.35, BACK_Z - 0.18, white, true),
+      this.extrude(this.fullRingShape(2.08, 6.43), 0.42, FRONT_Z - 0.05, white, true),
+      this.extrude(this.fullRingShape(1.97, 2.12), 0.55, FRONT_Z + 0.22, trim, true),
+    );
+    const fasciaAccent = new THREE.Mesh(new THREE.TorusGeometry(5.72, 0.1, 12, 128), accent);
+    fasciaAccent.position.z = FRONT_Z + 0.39;
+    fasciaAccent.castShadow = true;
+
+    const displayBezel = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.78, 0.17), trim);
+    displayBezel.position.set(0, 4.48, FRONT_Z + 0.48);
+    const displayFace = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.49, 0.045), screen);
+    displayFace.position.set(0, 4.48, FRONT_Z + 0.59);
+    closed.add(fasciaAccent, displayBezel, displayFace);
+
+    [-1, 1].forEach((side) => {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.94, 0.16), trim);
+      panel.position.set(side * 4.72, 0.15, FRONT_Z + 0.48);
+      const face = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.69, 0.045), interfaceFace);
+      face.position.set(side * 4.72, 0.15, FRONT_Z + 0.59);
+      closed.add(panel, face);
+      [-0.15, 0, 0.15].forEach((xOffset) => {
+        [-0.17, 0.12].forEach((yOffset) => {
+          const control = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.075, 0.025), screen);
+          control.position.set(
+            side * 4.72 + xOffset,
+            0.15 + yOffset,
+            FRONT_Z + 0.625,
+          );
+          closed.add(control);
+        });
+      });
+    });
+    const addCutaway = (parent: THREE.Group, start: number, end: number) => {
+      parent.add(
+        this.extrude(this.fullRingShape(5.62, 6.28), CUT_START - BACK_Z, BACK_Z, white, true),
+        this.extrude(
+          this.sectorShape(5.62, 6.28, start, end),
+          FRONT_Z - CUT_START + 0.18,
+          CUT_START,
+          white,
+          true,
+        ),
+        this.extrude(this.sectorShape(2.08, 6.43, start, end), 0.42, FRONT_Z - 0.05, white, true),
+        this.extrude(this.sectorShape(1.97, 2.12, start, end), 0.55, FRONT_Z + 0.22, trim, true),
+      );
+    };
+    addCutaway(window90, WINDOW_START, WINDOW_END);
+    addCutaway(reveal270, REVEAL_START, REVEAL_END);
+    window90.visible = false;
+    reveal270.visible = false;
+
+    const baseSkirt = new THREE.Mesh(new THREE.BoxGeometry(10.8, 1.25, 9.2), white);
+    baseSkirt.position.set(0, -5.78, -0.3);
+    baseSkirt.castShadow = true;
+    const baseShadow = new THREE.Mesh(new THREE.BoxGeometry(9.9, 0.24, 8.45), dark);
+    baseShadow.position.set(0, -6.42, -0.3);
+    group.add(closed, window90, reveal270, baseSkirt, baseShadow);
+    this.root.add(group);
+    this.register(id, 8, group, [white, trim, dark, accent, screen, interfaceFace]);
+    this.cutawayVariants.set(id, { closed, window90, reveal270 });
   }
 
   private buildServiceHardware(): void {
-    const housing = this.layers.get("housing")?.group;
-    if (!housing) return;
-    const metal = this.material(0x8a9194, {
+    const vent = new THREE.Group();
+    const ventMetal = this.material(0x9aa2a5, {
       metalness: 0.92,
       roughness: 0.22,
     });
-    const darkMetal = this.material(0x4c5357, {
+    const ventDark = this.material(0x4c5357, {
       metalness: 0.9,
       roughness: 0.24,
     });
-
-    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.58, 3.4, 32), metal);
-    pipe.position.set(-1.85, 6.05, -1.1);
-    pipe.castShadow = true;
-    pipe.userData.layerId = "housing";
-    housing.add(pipe);
-    this.pickables.push(pipe);
-
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.11, 12, 48), darkMetal);
+    const upperPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.52, 1.8, 32), ventMetal);
+    upperPipe.position.set(-1.85, 6.9, -1.1);
+    upperPipe.castShadow = true;
+    const lowerPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.58, 1.7, 32), ventMetal);
+    lowerPipe.position.set(-1.85, 5.15, -1.1);
+    lowerPipe.castShadow = true;
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.11, 12, 48), ventDark);
     collar.rotation.x = Math.PI / 2;
     collar.position.set(-1.85, 7.3, -1.1);
-    collar.userData.layerId = "housing";
-    housing.add(collar);
-    this.pickables.push(collar);
+    const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.78, 0.2, 36), ventDark);
+    flange.position.set(-1.85, 4.42, -1.1);
+    const internal = new THREE.Group();
+    internal.add(lowerPipe, flange);
+    this.quenchInternal = internal;
+    vent.add(upperPipe, collar, internal);
+    this.root.add(vent);
+    this.register("quench-vent", 10, vent, [ventMetal, ventDark], "service");
 
-    const canister = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 2.8, 40), metal);
-    canister.rotation.z = Math.PI / 2;
-    canister.position.set(2.15, 6.25, -1.2);
-    canister.castShadow = true;
-    canister.userData.layerId = "housing";
-    housing.add(canister);
-    this.pickables.push(canister);
-
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.83, 0.83, 0.17, 40), darkMetal);
-    cap.rotation.z = Math.PI / 2;
-    cap.position.set(3.58, 6.25, -1.2);
-    cap.userData.layerId = "housing";
-    housing.add(cap);
-    this.pickables.push(cap);
-
-    [1.15, 3.15].forEach((x) => {
-      const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.52, 1.25), darkMetal);
-      saddle.position.set(x, 5.55, -1.2);
-      saddle.userData.layerId = "housing";
-      housing.add(saddle);
-      this.pickables.push(saddle);
+    const chiller = new THREE.Group();
+    const chillerMetal = this.material(0x899296, {
+      metalness: 0.9,
+      roughness: 0.2,
     });
-    this.layers.get("housing")?.materials.push(metal, darkMetal);
+    const chillerDark = this.material(0x465055, {
+      metalness: 0.82,
+      roughness: 0.3,
+    });
+    const canister = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 2.5, 40), chillerMetal);
+    canister.rotation.z = Math.PI / 2;
+    canister.position.set(1.55, 5.15, -1.2);
+    canister.castShadow = true;
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.83, 0.83, 0.17, 40), chillerDark);
+    cap.rotation.z = Math.PI / 2;
+    cap.position.set(2.83, 5.15, -1.2);
+    chiller.add(canister, cap);
+    [0.75, 2.35].forEach((x) => {
+      const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.52, 1.25), chillerDark);
+      saddle.position.set(x, 4.45, -1.2);
+      chiller.add(saddle);
+    });
+    [0.34, 2.66].forEach((x) => {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.77, 0.055, 10, 48), chillerDark);
+      band.rotation.y = Math.PI / 2;
+      band.position.set(x, 5.15, -1.2);
+      chiller.add(band);
+    });
+    this.root.add(chiller);
+    this.register("cryogenic-chiller", 10, chiller, [chillerMetal, chillerDark], "service");
   }
 
   private buildSupports(): void {
-    const housing = this.layers.get("housing")?.group;
+    const housing = this.components.get("housing")?.group;
     if (!housing) return;
     const supportMaterial = this.material(0x5d6366, {
       metalness: 0.83,
@@ -579,7 +782,7 @@ export class MagnetScene {
         const foot = new THREE.Mesh(new THREE.BoxGeometry(1.25, 1.15, 1.6), supportMaterial);
         foot.position.set(x, -5.65, z);
         foot.castShadow = true;
-        foot.userData.layerId = "housing";
+        foot.userData.selectionId = "housing";
         housing.add(foot);
         this.pickables.push(foot);
       });
@@ -587,10 +790,10 @@ export class MagnetScene {
     const base = new THREE.Mesh(new THREE.BoxGeometry(10.2, 0.42, 8.8), supportMaterial);
     base.position.set(0, -6.27, -0.2);
     base.castShadow = true;
-    base.userData.layerId = "housing";
+    base.userData.selectionId = "housing";
     housing.add(base);
     this.pickables.push(base);
-    this.layers.get("housing")?.materials.push(supportMaterial);
+    this.components.get("housing")?.materials.push(supportMaterial);
   }
 
   private buildLabelAnchors(): void {
@@ -599,13 +802,17 @@ export class MagnetScene {
       "main-magnet": new THREE.Vector3(4.2, 0.35, 3.8),
       "cryostat-inner": new THREE.Vector3(-2.6, 2.9, 3.8),
       housing: new THREE.Vector3(4.8, 2.8, -1.2),
+      "scanner-cladding": new THREE.Vector3(5.65, 2.9, 1.7),
+      "quench-vent": new THREE.Vector3(-1.85, 7.5, -1.1),
+      "cryogenic-chiller": new THREE.Vector3(1.75, 5.7, -1.2),
       isocenter: new THREE.Vector3(0, 0, 0),
       b0: new THREE.Vector3(0.55, 0.2, 7.8),
     };
     Object.entries(anchors).forEach(([id, position]) => {
       const anchor = new THREE.Object3D();
       anchor.position.copy(position);
-      this.root.add(anchor);
+      const component = this.components.get(id as SelectionId);
+      (component?.group ?? this.root).add(anchor);
       this.labelAnchors.set(id, anchor);
     });
   }
@@ -698,7 +905,7 @@ export class MagnetScene {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    this.clipVisual = new THREE.Mesh(new THREE.CircleGeometry(6.6, 80), material);
+    this.clipVisual = new THREE.Mesh(new THREE.CircleGeometry(7.0, 80), material);
     this.clipVisual.visible = false;
     this.scene.add(this.clipVisual);
   }
@@ -719,30 +926,57 @@ export class MagnetScene {
     const stepChanged = state.step !== this.previousStep;
     this.latestState = state;
 
-    this.completeHousing.visible = !state.cutaway;
-    this.cutawayHousing.visible = state.cutaway;
+    this.cutawayVariants.forEach((variants) => {
+      variants.closed.visible = state.cutawayMode === "closed";
+      variants.window90.visible = state.cutawayMode === "window-90";
+      variants.reveal270.visible = state.cutawayMode === "reveal-270";
+    });
 
-    this.layers.forEach((layer, id) => {
-      const layerState = state.layers[id];
-      layer.group.visible = layerState.visible;
-      const explodeOffset = (4.5 - layer.order) * state.explode * 0.52;
-      layer.group.position.z = explodeOffset;
-      layer.materials.forEach((material) => {
-        const selected = state.selectedLayer === id;
-        material.opacity = layerState.opacity;
-        material.depthWrite = layerState.opacity > 0.92;
+    this.components.forEach((component, id) => {
+      const componentState = state.components[id];
+      const concealedByClosedCladding =
+        id === "cryogenic-chiller"
+        && state.components["scanner-cladding"].visible
+        && state.cutawayMode === "closed";
+      component.group.visible = componentState.visible && !concealedByClosedCladding;
+      const explodeOffset = component.kind === "layer"
+        ? (4.5 - component.order) * state.explode * 1.08
+        : 0;
+      component.group.position.z = explodeOffset;
+      if (component.kind === "layer") {
+        const [rIn, rOut] = radial[id as LayerId];
+        const nominalRadius = (rIn + rOut) / 2;
+        const addedRadius = (component.order - 1) * state.radialExplode * 0.44;
+        const radialScale = 1 + addedRadius / nominalRadius;
+        component.group.position.x = 0;
+        component.group.position.y = 0;
+        component.group.scale.set(radialScale, radialScale, 1);
+      } else {
+        component.group.position.x = 0;
+        component.group.position.y = 0;
+        component.group.scale.set(1, 1, 1);
+      }
+      component.materials.forEach((material) => {
+        const selected = state.selectedComponent === id;
+        material.opacity = componentState.opacity;
+        material.depthWrite = componentState.opacity > 0.92;
         material.emissive.setHex(selected ? 0x183c40 : material.userData.baseEmissive ?? 0x000000);
         material.emissiveIntensity = selected ? 0.38 : id === "main-magnet" ? 0.16 : 0;
         material.needsUpdate = true;
       });
     });
+    if (this.quenchInternal) {
+      this.quenchInternal.visible = !(
+        state.components["scanner-cladding"].visible && state.cutawayMode === "closed"
+      );
+    }
 
     const clipZ = BACK_Z - 0.2 + state.sectionPlane * (MODEL_LENGTH + 0.4);
     this.clipPlane.constant = clipZ;
     this.clipVisual.visible = state.sectionEnabled;
     this.clipVisual.position.z = clipZ;
-    this.layers.forEach((layer) => {
-      layer.materials.forEach((material) => {
+    this.components.forEach((component) => {
+      component.materials.forEach((material) => {
         material.clippingPlanes = state.sectionEnabled ? [this.clipPlane] : null;
       });
     });
@@ -839,18 +1073,18 @@ export class MagnetScene {
       else if (event.key === "ArrowRight") this.controls.rotateLeft(-rotate);
       else if (event.key === "ArrowUp") this.controls.rotateUp(rotate);
       else if (event.key === "ArrowDown") this.controls.rotateUp(-rotate);
-      else if (event.key === "+" || event.key === "=") this.controls.dollyIn(1.08);
-      else if (event.key === "-" || event.key === "_") this.controls.dollyOut(1.08);
+      else if (event.key === "+" || event.key === "=") this.controls.dollyOut(1.08);
+      else if (event.key === "-" || event.key === "_") this.controls.dollyIn(1.08);
       else return;
       event.preventDefault();
       this.controls.update();
     });
   }
 
-  private pick(): LayerId | null {
+  private pick(): SelectionId | null {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = this.raycaster.intersectObjects(this.pickables, false).find((result) => result.object.visible);
-    return (hit?.object.userData.layerId as LayerId | undefined) ?? null;
+    return (hit?.object.userData.selectionId as SelectionId | undefined) ?? null;
   }
 
   private projectLabels(): void {
@@ -891,6 +1125,14 @@ export class MagnetScene {
 
   resetCamera(reducedMotion = false): void {
     this.moveCamera(this.latestState?.step ?? "complete", reducedMotion);
+  }
+
+  zoom(direction: "in" | "out"): void {
+    if (this.failed || this.disposed) return;
+    if (direction === "in") this.controls.dollyOut(1.12);
+    else this.controls.dollyIn(1.12);
+    this.controls.update();
+    this.renderNow();
   }
 
   dispose(): void {
