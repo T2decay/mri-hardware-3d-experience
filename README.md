@@ -22,8 +22,11 @@ npm run build
 npm run preview -- --host 127.0.0.1
 ```
 
-The Vite base is relative, so `dist/` can be hosted as a static site without a
-server runtime or login.
+The Vite base targets the repository's GitHub Pages path. Pushes to `main` run
+the Pages workflow, build the application, and deploy `dist/` without a server
+runtime or login.
+
+Live site: <https://t2decay.github.io/mri-hardware-3d-experience/>
 
 ## Interaction contract
 
