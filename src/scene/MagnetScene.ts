@@ -1083,8 +1083,22 @@ export class MagnetScene {
 
   private pick(): SelectionId | null {
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hit = this.raycaster.intersectObjects(this.pickables, false).find((result) => result.object.visible);
+    const hit = this.raycaster
+      .intersectObjects(this.pickables, false)
+      .find((result) => this.isEffectivelyPickable(result.object));
     return (hit?.object.userData.selectionId as SelectionId | undefined) ?? null;
+  }
+
+  private isEffectivelyPickable(object: THREE.Object3D): boolean {
+    const selectionId = object.userData.selectionId as SelectionId | undefined;
+    if (!selectionId || !this.latestState?.components[selectionId]?.visible) return false;
+
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      if (!current.visible) return false;
+      current = current.parent;
+    }
+    return true;
   }
 
   private projectLabels(): void {
