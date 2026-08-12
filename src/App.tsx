@@ -1,13 +1,24 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import BuildChallenge, {
+  type BuildChallengeState,
+} from "./components/BuildChallenge.tsx";
 import LayerExplorer from "./components/LayerExplorer.tsx";
 import ModelViewport from "./components/ModelViewport.tsx";
+import SystemRelationships, {
+  type RelationshipModeState,
+} from "./components/SystemRelationships.tsx";
 import {
   cutawayModes,
+  challengeBuildSteps,
+  challengeQuestions,
   experienceCopy,
   fieldModes,
+  relationshipPathways,
   selectableDefinitions,
   steps,
   type CutawayMode,
+  type LayerId,
+  type RelationshipPathwayId,
   type SelectionId,
   type StepId,
 } from "./content/lesson.ts";
@@ -18,6 +29,37 @@ import {
   type LabState,
 } from "./labState.ts";
 import type { MagnetScene } from "./scene/MagnetScene.ts";
+
+function initialBuildChallengeState(): BuildChallengeState {
+  return {
+    phase: "idle",
+    buildIndex: 0,
+    buildMistakes: 0,
+    questionIndex: 0,
+    questionMistakes: 0,
+    firstTryCorrect: 0,
+    questionHadMistake: false,
+    selectedChoiceId: null,
+    answerCorrect: false,
+    feedback: "Begin with the central opening through the magnet assembly.",
+    feedbackTone: "neutral",
+  };
+}
+
+function initialRelationshipModeState(
+  completedPathways: RelationshipPathwayId[] = [],
+): RelationshipModeState {
+  return {
+    activePathwayId: null,
+    stepIndex: 0,
+    phase: "explore",
+    selectedChoiceId: null,
+    answerCorrect: false,
+    feedback: "Choose the explanation best supported by Chapter 9.",
+    feedbackTone: "neutral",
+    completedPathways,
+  };
+}
 
 function preserveCladdingVisibility(
   components: LabState["components"],
@@ -86,6 +128,12 @@ function stepState(previous: LabState, step: StepId): LabState {
 
 export default function App() {
   const [state, setState] = useState<LabState>(() => initialLabState());
+  const [buildChallenge, setBuildChallenge] = useState<BuildChallengeState>(() =>
+    initialBuildChallengeState(),
+  );
+  const [relationshipMode, setRelationshipMode] = useState<RelationshipModeState>(() =>
+    initialRelationshipModeState(),
+  );
   const sceneRef = useRef<MagnetScene | null>(null);
   const activeStep = useMemo(() => steps.find((step) => step.id === state.step)!, [state.step]);
 
@@ -113,6 +161,8 @@ export default function App() {
 
   const reset = () => {
     setState(initialLabState());
+    setBuildChallenge(initialBuildChallengeState());
+    setRelationshipMode(initialRelationshipModeState());
     sceneRef.current?.resetCamera(state.reducedMotion);
   };
 
@@ -145,6 +195,235 @@ export default function App() {
       components: strippedComponentState(previous.components),
     }));
 
+  const startBuildChallenge = () => {
+    setRelationshipMode((previous) =>
+      initialRelationshipModeState(previous.completedPathways),
+    );
+    setBuildChallenge({
+      ...initialBuildChallengeState(),
+      phase: "build",
+    });
+    setState((previous) => ({
+      ...previous,
+      step: "cutaway",
+      selectedComponent: null,
+      components: strippedComponentState(defaultComponentState()),
+      explode: 0,
+      radialExplode: 0,
+      sectionEnabled: false,
+      cutawayMode: "window-90",
+      b0Visible: false,
+      fieldMode: "both",
+    }));
+  };
+
+  const chooseChallengeLayer = (id: LayerId) => {
+    if (buildChallenge.phase !== "build") return;
+    const expected = challengeBuildSteps[buildChallenge.buildIndex];
+    if (!expected || expected.id !== id) {
+      setBuildChallenge((previous) => ({
+        ...previous,
+        buildMistakes: previous.buildMistakes + 1,
+        feedback: expected?.hint ?? previous.feedback,
+        feedbackTone: "retry",
+      }));
+      return;
+    }
+
+    const nextIndex = buildChallenge.buildIndex + 1;
+    setState((lab) => ({
+      ...lab,
+      selectedComponent: id,
+      windingsVisited: lab.windingsVisited || id === "main-magnet",
+      components: {
+        ...lab.components,
+        [id]: { visible: true, opacity: 1 },
+      },
+    }));
+
+    setBuildChallenge((previous) =>
+      nextIndex === challengeBuildSteps.length
+        ? {
+            ...previous,
+            phase: "explain",
+            buildIndex: nextIndex,
+            questionIndex: 0,
+            selectedChoiceId: null,
+            answerCorrect: false,
+            feedback: "The model is assembled. Choose the explanation best supported by Chapter 9.",
+            feedbackTone: "neutral",
+          }
+        : {
+            ...previous,
+            buildIndex: nextIndex,
+            feedback: expected.success,
+            feedbackTone: "correct",
+          },
+    );
+  };
+
+  const chooseChallengeAnswer = (choiceId: string) => {
+    setBuildChallenge((previous) => {
+      if (previous.phase !== "explain" || previous.answerCorrect) return previous;
+      const question = challengeQuestions[previous.questionIndex];
+      if (!question) return previous;
+      const correct = choiceId === question.correctChoiceId;
+      return {
+        ...previous,
+        selectedChoiceId: choiceId,
+        answerCorrect: correct,
+        questionMistakes: previous.questionMistakes + (correct ? 0 : 1),
+        firstTryCorrect:
+          previous.firstTryCorrect + (correct && !previous.questionHadMistake ? 1 : 0),
+        questionHadMistake: previous.questionHadMistake || !correct,
+        feedback: correct ? question.correctFeedback : question.retryFeedback,
+        feedbackTone: correct ? "correct" : "retry",
+      };
+    });
+  };
+
+  const advanceChallengeQuestion = () => {
+    setBuildChallenge((previous) => {
+      if (previous.phase !== "explain" || !previous.answerCorrect) return previous;
+      if (previous.questionIndex === challengeQuestions.length - 1) {
+        return {
+          ...previous,
+          phase: "complete",
+          selectedChoiceId: null,
+          answerCorrect: false,
+          feedbackTone: "correct",
+        };
+      }
+      return {
+        ...previous,
+        questionIndex: previous.questionIndex + 1,
+        questionHadMistake: false,
+        selectedChoiceId: null,
+        answerCorrect: false,
+        feedback: "Choose the explanation best supported by Chapter 9.",
+        feedbackTone: "neutral",
+      };
+    });
+  };
+
+  const exitBuildChallenge = () => {
+    setBuildChallenge(initialBuildChallengeState());
+    setState((previous) => ({
+      ...initialLabState(),
+      reducedMotion: previous.reducedMotion,
+    }));
+  };
+
+  const reviewChallengeModel = () => {
+    setState((previous) => ({
+      ...previous,
+      step: "cutaway",
+      selectedComponent: null,
+      components: defaultComponentState(),
+      cutawayMode: "window-90",
+      explode: 0,
+      radialExplode: 0,
+      b0Visible: false,
+    }));
+  };
+
+  const applyRelationshipStep = (pathwayId: RelationshipPathwayId, stepIndex: number) => {
+    const pathway = relationshipPathways.find((item) => item.id === pathwayId);
+    const relationship = pathway?.steps[stepIndex];
+    if (!relationship) return;
+
+    setState((previous) => {
+      const focus = new Set(relationship.view.focusComponents);
+      const components = Object.fromEntries(
+        selectableDefinitions.map((component) => [
+          component.id,
+          {
+            visible: focus.has(component.id),
+            opacity: component.id === relationship.view.selectedComponent ? 1 : 0.42,
+          },
+        ]),
+      ) as LabState["components"];
+
+      return {
+        ...previous,
+        step: relationship.view.guidedStep,
+        selectedComponent: relationship.view.selectedComponent,
+        components,
+        explode: 0,
+        radialExplode: 0,
+        sectionEnabled: false,
+        cutawayMode: relationship.view.cutawayMode,
+        b0Visible: relationship.view.b0Visible,
+        fieldMode: relationship.view.fieldMode,
+        windingsVisited:
+          previous.windingsVisited || relationship.view.selectedComponent === "main-magnet",
+      };
+    });
+  };
+
+  const selectRelationshipPathway = (pathwayId: RelationshipPathwayId) => {
+    setBuildChallenge(initialBuildChallengeState());
+    setRelationshipMode((previous) => ({
+      ...initialRelationshipModeState(previous.completedPathways),
+      activePathwayId: pathwayId,
+    }));
+    applyRelationshipStep(pathwayId, 0);
+  };
+
+  const selectRelationshipStep = (stepIndex: number) => {
+    if (!relationshipMode.activePathwayId) return;
+    setRelationshipMode((previous) => ({
+      ...previous,
+      phase: "explore",
+      stepIndex,
+      selectedChoiceId: null,
+      answerCorrect: false,
+      feedbackTone: "neutral",
+    }));
+    applyRelationshipStep(relationshipMode.activePathwayId, stepIndex);
+  };
+
+  const openRelationshipScenario = () => {
+    setRelationshipMode((previous) => ({
+      ...previous,
+      phase: "scenario",
+      selectedChoiceId: null,
+      answerCorrect: false,
+      feedback: "Choose the explanation best supported by Chapter 9.",
+      feedbackTone: "neutral",
+    }));
+  };
+
+  const chooseRelationshipAnswer = (choiceId: string) => {
+    setRelationshipMode((previous) => {
+      if (!previous.activePathwayId || previous.answerCorrect) return previous;
+      const pathway = relationshipPathways.find((item) => item.id === previous.activePathwayId);
+      if (!pathway) return previous;
+      const correct = choiceId === pathway.scenario.correctChoiceId;
+      return {
+        ...previous,
+        selectedChoiceId: choiceId,
+        answerCorrect: correct,
+        feedback: correct
+          ? pathway.scenario.correctFeedback
+          : pathway.scenario.retryFeedback,
+        feedbackTone: correct ? "correct" : "retry",
+        completedPathways:
+          correct && !previous.completedPathways.includes(pathway.id)
+            ? [...previous.completedPathways, pathway.id]
+            : previous.completedPathways,
+      };
+    });
+  };
+
+  const returnToRelationshipLibrary = () => {
+    setRelationshipMode((previous) => initialRelationshipModeState(previous.completedPathways));
+    setState((previous) => ({
+      ...initialLabState(),
+      reducedMotion: previous.reducedMotion,
+    }));
+  };
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -154,7 +433,7 @@ export default function App() {
         </div>
         <div className="source-lockup">
           <span>Source-bound companion experience</span>
-          <strong>MRI in Practice, Fifth Edition · pp. 318–326</strong>
+          <strong>MRI in Practice, Fifth Edition · Chapter 9</strong>
         </div>
       </header>
 
@@ -330,6 +609,26 @@ export default function App() {
               {state.challengeComplete ? experienceCopy.challengeComplete : experienceCopy.challenge}
             </div>
           </div>
+
+          <BuildChallenge
+            challenge={buildChallenge}
+            onStart={startBuildChallenge}
+            onChooseLayer={chooseChallengeLayer}
+            onChooseAnswer={chooseChallengeAnswer}
+            onNextQuestion={advanceChallengeQuestion}
+            onExit={exitBuildChallenge}
+            onReview={reviewChallengeModel}
+          />
+
+          <SystemRelationships
+            mode={relationshipMode}
+            onSelectPathway={selectRelationshipPathway}
+            onSelectStep={selectRelationshipStep}
+            onOpenScenario={openRelationshipScenario}
+            onChooseAnswer={chooseRelationshipAnswer}
+            onBackToPathways={returnToRelationshipLibrary}
+            onNextPathway={returnToRelationshipLibrary}
+          />
         </section>
 
         <LayerExplorer
@@ -356,6 +655,7 @@ export default function App() {
           onIsolate={isolate}
           onShowAll={showAll}
           onStripAll={stripAll}
+          interactionLocked={buildChallenge.phase === "build"}
         />
       </main>
 

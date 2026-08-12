@@ -14,15 +14,17 @@ interface Props {
   onIsolate: (id: SelectionId) => void;
   onShowAll: () => void;
   onStripAll: () => void;
+  interactionLocked?: boolean;
 }
 
 interface VisibilityToggleProps {
   visible: boolean;
   name: string;
   onToggle: () => void;
+  disabled?: boolean;
 }
 
-function VisibilityToggle({ visible, name, onToggle }: VisibilityToggleProps) {
+function VisibilityToggle({ visible, name, onToggle, disabled }: VisibilityToggleProps) {
   return (
     <button
       type="button"
@@ -30,6 +32,7 @@ function VisibilityToggle({ visible, name, onToggle }: VisibilityToggleProps) {
       aria-label={`${visible ? "Hide" : "Show"} ${name}`}
       aria-pressed={visible}
       onClick={onToggle}
+      disabled={disabled}
     >
       <span className="visibility-state">{visible ? "ON" : "OFF"}</span>
       <span className="toggle-track" aria-hidden="true">
@@ -47,6 +50,7 @@ export default function LayerExplorer({
   onIsolate,
   onShowAll,
   onStripAll,
+  interactionLocked = false,
 }: Props) {
   const selected = selectableDefinitions.find((component) => component.id === state.selectedComponent) ?? null;
 
@@ -58,10 +62,16 @@ export default function LayerExplorer({
           <h2>Eight layers · bore outward</h2>
         </div>
         <div className="panel-actions">
-          <button type="button" className="text-action" onClick={onShowAll}>Show all</button>
-          <button type="button" className="text-action" onClick={onStripAll}>Strip all</button>
+          <button type="button" className="text-action" onClick={onShowAll} disabled={interactionLocked}>Show all</button>
+          <button type="button" className="text-action" onClick={onStripAll} disabled={interactionLocked}>Strip all</button>
         </div>
       </div>
+
+      {interactionLocked && (
+        <p className="explorer-lock-note" role="status">
+          Explorer controls pause during the build phase so each choice comes from the challenge tray.
+        </p>
+      )}
 
       <ol className="layer-list">
         {layers.map((layer) => {
@@ -74,6 +84,7 @@ export default function LayerExplorer({
                 className="layer-name"
                 aria-pressed={isSelected}
                 onClick={() => onSelect(layer.id)}
+                disabled={interactionLocked}
               >
                 <span className="layer-number">{String(layer.order).padStart(2, "0")}</span>
                 <span className="layer-swatch" style={{ background: layer.color }} aria-hidden="true" />
@@ -83,6 +94,7 @@ export default function LayerExplorer({
                 visible={componentState.visible}
                 name={layer.name}
                 onToggle={() => onToggle(layer.id)}
+                disabled={interactionLocked}
               />
             </li>
           );
@@ -104,6 +116,7 @@ export default function LayerExplorer({
                 className="layer-name"
                 aria-pressed={isSelected}
                 onClick={() => onSelect(component.id)}
+                disabled={interactionLocked}
               >
                 <span className="service-mark">S</span>
                 <span className="layer-swatch" style={{ background: component.color }} aria-hidden="true" />
@@ -113,6 +126,7 @@ export default function LayerExplorer({
                 visible={componentState.visible}
                 name={component.name}
                 onToggle={() => onToggle(component.id)}
+                disabled={interactionLocked}
               />
             </li>
           );
@@ -135,7 +149,7 @@ export default function LayerExplorer({
             </div>
           )}
           <div className="detail-actions">
-            <button type="button" className="secondary-button" onClick={() => onIsolate(selected.id)}>
+            <button type="button" className="secondary-button" onClick={() => onIsolate(selected.id)} disabled={interactionLocked}>
               Isolate {selected.kind === "layer" ? "layer" : "component"}
             </button>
           </div>
@@ -149,6 +163,7 @@ export default function LayerExplorer({
             min="5"
             max="100"
             value={Math.round(state.components[selected.id].opacity * 100)}
+            disabled={interactionLocked}
             onChange={(event) => {
               const opacity = Number(event.currentTarget.value) / 100;
               onOpacity(selected.id, opacity);
