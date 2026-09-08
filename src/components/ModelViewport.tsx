@@ -3,12 +3,15 @@ import { selectableDefinitions, type SelectionId, type StepId } from "../content
 import type { LabState } from "../labState.ts";
 import type { LabelPosition, MagnetScene, MagnetSceneState } from "../scene/MagnetScene.ts";
 
+export type SceneHandle = Pick<MagnetScene, "failed" | "update" | "resize" | "dispose" | "zoom" | "resetCamera">;
+
 interface Props {
+  generation: "gen1" | "gen2";
   state: LabState;
   onSelect: (id: SelectionId) => void;
   onExplode: (value: number) => void;
   onRadialExplode: (value: number) => void;
-  sceneRef: React.RefObject<MagnetScene | null>;
+  sceneRef: React.RefObject<SceneHandle | null>;
 }
 
 const visibleLabels: Record<StepId, Array<{ id: string; text: string; selectionId?: SelectionId }>> = {
@@ -61,11 +64,14 @@ function sceneState(state: LabState): MagnetSceneState {
 
 export default function ModelViewport({
   state,
+  generation,
   onSelect,
   onExplode,
   onRadialExplode,
   sceneRef,
 }: Props) {
+  const latestState = useRef(state);
+  latestState.current = state;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -76,10 +82,14 @@ export default function ModelViewport({
     const canvas = canvasRef.current;
     if (!canvas) return;
     let active = true;
-    let scene: MagnetScene | null = null;
+    let scene: SceneHandle | null = null;
     let observer: ResizeObserver | null = null;
 
-    import("../scene/MagnetScene.ts")
+    setLoading(true);
+    setFailed(false);
+    setHover(null);
+    setPositions({});
+    (generation === "gen2" ? import("../scene/MagnetSceneGen2.ts") : import("../scene/MagnetScene.ts"))
       .then(({ MagnetScene }) => {
         if (!active) return;
         scene = new MagnetScene(canvas, {
@@ -93,7 +103,7 @@ export default function ModelViewport({
           setLoading(false);
           return;
         }
-        scene.update(sceneState(state));
+        scene.update(sceneState(latestState.current));
         sceneRef.current = scene;
         observer = new ResizeObserver(() => scene?.resize());
         observer.observe(canvas);
@@ -110,7 +120,7 @@ export default function ModelViewport({
       sceneRef.current = null;
       scene?.dispose();
     };
-  }, [onSelect, sceneRef]);
+  }, [onSelect, sceneRef, generation]);
 
   useEffect(() => {
     sceneRef.current?.update(sceneState(state));

@@ -28,7 +28,7 @@ import {
   strippedComponentState,
   type LabState,
 } from "./labState.ts";
-import type { MagnetScene } from "./scene/MagnetScene.ts";
+import type { SceneHandle } from "./components/ModelViewport.tsx";
 
 function initialBuildChallengeState(): BuildChallengeState {
   return {
@@ -127,6 +127,7 @@ function stepState(previous: LabState, step: StepId): LabState {
 }
 
 export default function App() {
+  const [generation, setGeneration] = useState<"gen1" | "gen2">("gen1");
   const [state, setState] = useState<LabState>(() => initialLabState());
   const [buildChallenge, setBuildChallenge] = useState<BuildChallengeState>(() =>
     initialBuildChallengeState(),
@@ -134,7 +135,7 @@ export default function App() {
   const [relationshipMode, setRelationshipMode] = useState<RelationshipModeState>(() =>
     initialRelationshipModeState(),
   );
-  const sceneRef = useRef<MagnetScene | null>(null);
+  const sceneRef = useRef<SceneHandle | null>(null);
   const activeStep = useMemo(() => steps.find((step) => step.id === state.step)!, [state.step]);
 
   const selectComponent = useCallback((id: SelectionId) => {
@@ -431,6 +432,10 @@ export default function App() {
           <span className="kicker">{experienceCopy.eyebrow}</span>
           <h1>{experienceCopy.title}</h1>
         </div>
+        <div className="generation-switch" role="group" aria-label="Model generation">
+          <button aria-pressed={generation === "gen1"} onClick={() => setGeneration("gen1")}>Gen 1 <span>Original</span></button>
+          <button aria-pressed={generation === "gen2"} onClick={() => setGeneration("gen2")}>Gen 2 <span>Studio</span></button>
+        </div>
         <div className="source-lockup">
           <span>Source-bound companion experience</span>
           <strong>MRI in Practice, Fifth Edition · Chapter 9</strong>
@@ -453,6 +458,8 @@ export default function App() {
           </div>
 
           <ModelViewport
+            key={generation}
+            generation={generation}
             state={state}
             onSelect={selectComponent}
             onExplode={(explode) => setState((previous) => ({ ...previous, explode }))}
