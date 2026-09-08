@@ -27,6 +27,8 @@ No external textures or new dependencies are required.
 - 390px mobile layout has no horizontal overflow; selector works both ways.
 - Final browser console: zero errors and zero warnings since reload.
 
-This is a local review branch, `codex/gen2-realism`; it has not been pushed or
-published. Run `npm ci` if dependencies are absent, then `npm run dev -- --host
-127.0.0.1`. For this preview Vite uses port 5186.
+Approved for student publication on September 8, 2026. Pushes to `main` build
+and deploy both generations through the existing GitHub Pages workflow.
+
+Run `npm ci` if dependencies are absent, then
+`npm run dev -- --host 127.0.0.1` for local development.
